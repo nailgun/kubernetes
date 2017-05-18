@@ -156,6 +156,14 @@ func defaultPredicates() sets.String {
 			},
 		),
 
+		// Fit is determined by PV label node name.
+		factory.RegisterFitPredicateFactory(
+			"MatchHostPathPVNode",
+			func(args factory.PluginFactoryArgs) algorithm.FitPredicate {
+				return predicates.NewHostPathPVNodeChecker(args.PVInfo, args.PVCInfo)
+			},
+		),
+
 		// Fit is determined by non-conflicting disk volumes.
 		factory.RegisterFitPredicate("NoDiskConflict", predicates.NoDiskConflict),
 

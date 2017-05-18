@@ -1266,3 +1266,65 @@ func CheckNodeDiskPressurePredicate(pod *v1.Pod, meta interface{}, nodeInfo *sch
 	}
 	return true, nil, nil
 }
+
+type HostPathPVNodeChecker struct {
+	pvInfo   PersistentVolumeInfo
+	pvcInfo  PersistentVolumeClaimInfo
+}
+
+func NewHostPathPVNodeChecker(pvInfo PersistentVolumeInfo, pvcInfo PersistentVolumeClaimInfo) algorithm.FitPredicate {
+	checker := &HostPathPVNodeChecker{
+		pvInfo: pvInfo,
+		pvcInfo: pvcInfo,
+	}
+	return checker.CheckHostPathPVNode
+}
+
+func (c *HostPathPVNodeChecker) CheckHostPathPVNode(pod *v1.Pod, meta interface{}, nodeInfo *schedulercache.NodeInfo) (bool, []algorithm.PredicateFailureReason, error) {
+	podNodeName := nodeInfo.Node().Name
+
+	for _, v := range pod.Spec.Volumes {
+		if v.PersistentVolumeClaim == nil {
+			// Volume is not a PVC
+			continue
+		}
+
+		pvc, err := c.pvcInfo.GetPersistentVolumeClaimInfo(pod.Namespace, v.PersistentVolumeClaim.ClaimName)
+		if err != nil {
+			return false, nil, err
+		}
+
+		if pvc == nil {
+			return false, nil, apierrors.NewNotFound(v1.Resource("persistentvolumeclaim"), v.PersistentVolumeClaim.ClaimName)
+		}
+
+		if pvc.Status.Phase != v1.ClaimBound {
+			return false, nil, fmt.Errorf("PVC %v not bound yet", v.PersistentVolumeClaim.ClaimName)
+		}
+
+		pv, err := c.pvInfo.GetPersistentVolumeInfo(pvc.Spec.VolumeName)
+		if err != nil {
+			return false, nil, err
+		}
+
+		if pv == nil {
+			return false, nil, apierrors.NewNotFound(v1.Resource("persistentvolume"), pvc.Spec.VolumeName)
+		}
+
+		if pv.Spec.HostPath == nil {
+			// PV is not "hostPath" type
+			continue
+		}
+
+		pvNodeName := pv.Annotations["nodeName"]
+		if pvNodeName == "" {
+			return false, nil, fmt.Errorf("PV %v doesn't have nodeName annotation", pv.Name)
+		}
+
+		if podNodeName != pvNodeName {
+			return false, []algorithm.PredicateFailureReason{ErrHostPathPVNodeNotMatch}, nil
+		}
+	}
+
+	return true, nil, nil
+}
